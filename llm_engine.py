@@ -5,10 +5,16 @@ from google.genai import types
 from config import API_KEY, MODEL, SYSTEM_PROMPT
 
 client = genai.Client(api_key=API_KEY)
-chat = client.chats.create(
-    model=MODEL,
-    config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-)
+
+
+def new_chat():
+    return client.chats.create(
+        model=MODEL,
+        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+    )
+
+
+chat = new_chat()
 
 PROMPT_RE = re.compile(r"^\s*\w+@[\w-]+:.*[#$]\s*$")
 
@@ -27,11 +33,12 @@ def clean(text):
     return "\n".join(lines).strip()
 
 
-def ask(cwd, cmd):
+def ask(cwd, cmd, chat_obj=None):
+    active = chat_obj or chat
     msg = f"[current directory: {cwd}]\n$ {cmd}"
     for attempt in range(6):
         try:
-            return (chat.send_message(msg).text or ""), True
+            return (active.send_message(msg).text or ""), True
         except Exception:
             print(f"[server busy, retry {attempt + 1}/6]")
             time.sleep(4)
