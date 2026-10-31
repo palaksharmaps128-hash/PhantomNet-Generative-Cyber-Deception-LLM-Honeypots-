@@ -1,10 +1,12 @@
 import re
+import time
 import uuid
 import threading
+from collections import deque
 from flask import Flask, request, jsonify
 from config import START_DIR, HOSTNAME
 from llm_engine import ask, clean, new_chat
-from shell import do_cd
+from shell import do_cd, try_fake
 from logger import log_event
 from threat_classifier import classify, SEVERITY
 import db
@@ -15,6 +17,8 @@ SESSIONS = {}
 SESSIONS_LOCK = threading.Lock()
 SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 MAX_CMD_LEN = 500
+RATE_LIMIT = 30          # commands per minute per session
+MAX_SESSION_CMDS = 500   # commands per session
 
 
 def get_session(sid):
@@ -26,6 +30,8 @@ def get_session(sid):
                 "cwd": START_DIR,
                 "chat": new_chat(),
                 "lock": threading.Lock(),
+                "times": deque(),
+                "count": 0,
             }
         return sid, SESSIONS[sid]
 
@@ -55,8 +61,18 @@ def command():
 
     sid, session = get_session(sid)
     with session["lock"]:
+        now = time.time()
+        times = session["times"]
+        while times and now - times[0] > 60:
+            times.popleft()
+        if len(times) >= RATE_LIMIT or session["count"] >= MAX_SESSION_CMDS:
+            return jsonify({"error": "rate limit exceeded, slow down"}), 429
+        times.append(now)
+        session["count"] += 1
+
         cwd = session["cwd"]
         first = cmd.split()[0]
+        fake = None
 
         if first in ("exit", "logout"):
             log_event(cwd, cmd, "", "python", session_id=sid)
@@ -72,10 +88,15 @@ def command():
             log_event(cwd, cmd, cwd, "python", session_id=sid)
             output, source = cwd, "python"
         else:
-            raw, ok = ask(cwd, cmd, chat_obj=session["chat"])
-            output = clean(raw)
-            source = "llm" if ok else "llm-error"
-            log_event(cwd, cmd, output, source, session_id=sid)
+            fake = try_fake(cmd, cwd)
+            if fake is not None:
+                log_event(cwd, cmd, fake, "python", session_id=sid)
+                output, source = fake, "python"
+            else:
+                raw, ok = ask(cwd, cmd, chat_obj=session["chat"])
+                output = clean(raw)
+                source = "llm" if ok else "llm-error"
+                log_event(cwd, cmd, output, source, session_id=sid)
 
     category = classify(cmd)
     return jsonify(

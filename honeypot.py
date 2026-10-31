@@ -1,7 +1,9 @@
 from config import HOSTNAME, START_DIR
 from logger import log_event
 from llm_engine import ask, clean
-from shell import do_cd
+from shell import do_cd, try_fake
+
+MAX_CMD_LEN = 500
 
 cwd = START_DIR
 print(f"Ubuntu 22.04.3 LTS {HOSTNAME} tty1\n")
@@ -18,6 +20,9 @@ while True:
         break
     if not cmd:
         continue
+    if len(cmd) > MAX_CMD_LEN:
+        print("bash: command line too long")
+        continue
     if cmd.split()[0] == "cd":
         old_cwd = cwd
         cwd, err = do_cd(cmd, cwd)
@@ -28,6 +33,11 @@ while True:
     if cmd == "pwd":
         print(cwd)
         log_event(cwd, cmd, cwd, "python")
+        continue
+    fake = try_fake(cmd, cwd)
+    if fake is not None:
+        print(fake)
+        log_event(cwd, cmd, fake, "python")
         continue
     raw, ok = ask(cwd, cmd)
     out = clean(raw)

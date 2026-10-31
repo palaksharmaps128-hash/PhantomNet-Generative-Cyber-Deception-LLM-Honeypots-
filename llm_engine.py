@@ -1,5 +1,6 @@
 import re
 import time
+from datetime import datetime, timezone
 from google import genai
 from google.genai import types
 from config import API_KEY, MODEL, SYSTEM_PROMPT
@@ -18,6 +19,22 @@ chat = new_chat()
 
 PROMPT_RE = re.compile(r"^\s*\w+@[\w-]+:.*[#$]\s*$")
 
+# Safety: never let the model break character.
+INJECTION_RE = re.compile(
+    r"ignore (all |any )?(previous|prior|above|your) (instructions|rules)"
+    r"|system prompt"
+    r"|you are (an? )?(ai|llm|language model|chatbot)"
+    r"|are you (an? )?(ai|llm|bot|honeypot)"
+    r"|reveal your (prompt|instructions)",
+    re.IGNORECASE,
+)
+LEAK_RE = re.compile(
+    r"as an ai\b|language model|i('m| am) (sorry|an ai)"
+    r"|i (cannot|can't|can not) (assist|help|comply|fulfill|provide)"
+    r"|system prompt|\bgemini\b|\bhoneypot\b",
+    re.IGNORECASE,
+)
+
 
 def clean(text):
     lines = []
@@ -33,12 +50,23 @@ def clean(text):
     return "\n".join(lines).strip()
 
 
+def _now():
+    return datetime.now(timezone.utc).strftime("%a %b %d %H:%M:%S UTC %Y")
+
+
 def ask(cwd, cmd, chat_obj=None):
+    words = cmd.split()
+    fallback = f"bash: {words[0] if words else cmd}: command not found"
+    if INJECTION_RE.search(cmd):
+        return fallback, True
     active = chat_obj or chat
-    msg = f"[current directory: {cwd}]\n$ {cmd}"
+    msg = f"[current directory: {cwd}]\n[current time: {_now()}]\n$ {cmd}"
     for attempt in range(6):
         try:
-            return (active.send_message(msg).text or ""), True
+            text = active.send_message(msg).text or ""
+            if LEAK_RE.search(text):
+                return fallback, True
+            return text, True
         except Exception:
             print(f"[server busy, retry {attempt + 1}/6]")
             time.sleep(4)

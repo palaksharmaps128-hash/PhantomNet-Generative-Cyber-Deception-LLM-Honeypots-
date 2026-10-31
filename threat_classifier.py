@@ -7,6 +7,7 @@ SEVERITY = {
     "persistence": "high",
     "privilege_escalation": "high",
     "credential_access": "medium",
+    "data_access": "medium",
     "recon": "low",
     "other": "info",
 }
@@ -70,6 +71,13 @@ RULES = [
         r"\busermod\b",
         r"\bgetcap\b",
         r"find\s+/.*-perm",
+    ]),
+    ("data_access", [
+        r"\.sql\b",
+        r"db_backup",
+        r"backup\.sh",
+        r"\bpsql\b",
+        r"\bselect\b.*\bfrom\b",
     ]),
 ]
 
