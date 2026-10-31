@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timezone
 from google import genai
 from google.genai import types
-from config import API_KEY, MODEL, SYSTEM_PROMPT
+from config import API_KEY, MODEL, FALLBACK_MODEL, SYSTEM_PROMPT
 
 client = genai.Client(api_key=API_KEY)
 
@@ -16,6 +16,9 @@ def new_chat():
 
 
 chat = new_chat()
+
+# Counts how often the backup model had to answer (shown in evaluation).
+STATS = {"fallback": 0}
 
 PROMPT_RE = re.compile(r"^\s*\w+@[\w-]+:.*[#$]\s*$")
 
@@ -54,6 +57,16 @@ def _now():
     return datetime.now(timezone.utc).strftime("%a %b %d %H:%M:%S UTC %Y")
 
 
+def _fallback_reply(msg):
+    """One-shot answer from the backup model (no chat history)."""
+    resp = client.models.generate_content(
+        model=FALLBACK_MODEL,
+        contents=msg,
+        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+    )
+    return resp.text or ""
+
+
 def ask(cwd, cmd, chat_obj=None):
     words = cmd.split()
     fallback = f"bash: {words[0] if words else cmd}: command not found"
@@ -62,12 +75,18 @@ def ask(cwd, cmd, chat_obj=None):
     active = chat_obj or chat
     msg = f"[current directory: {cwd}]\n[current time: {_now()}]\n$ {cmd}"
     for attempt in range(6):
+        use_fallback = attempt >= 3  # 3 tries on main model, then 3 on backup
         try:
-            text = active.send_message(msg).text or ""
+            if use_fallback:
+                text = _fallback_reply(msg)
+                STATS["fallback"] += 1
+            else:
+                text = active.send_message(msg).text or ""
             if LEAK_RE.search(text):
                 return fallback, True
             return text, True
         except Exception:
-            print(f"[server busy, retry {attempt + 1}/6]")
-            time.sleep(4)
+            label = "backup model" if use_fallback else "server busy"
+            print(f"[{label}, retry {attempt + 1}/6]")
+            time.sleep(3)
     return "bash: fork: retry: Resource temporarily unavailable", False

@@ -9,6 +9,7 @@ from llm_engine import ask, clean, new_chat
 from shell import do_cd, try_fake
 from logger import log_event
 from threat_classifier import classify, SEVERITY
+from summary import build_summary
 import db
 
 app = Flask(__name__)
@@ -122,6 +123,16 @@ def logs():
     except ValueError:
         return jsonify({"error": "limit must be a number"}), 400
     return jsonify(db.fetch_logs(session_id=sid, limit=limit))
+
+
+@app.get("/api/summary/<session_id>")
+def session_summary(session_id):
+    if not SID_RE.match(session_id):
+        return jsonify({"error": "invalid session_id"}), 400
+    result = build_summary(session_id)
+    if result is None:
+        return jsonify({"error": "session not found"}), 404
+    return jsonify(result)
 
 
 @app.get("/api/stats")

@@ -1,7 +1,8 @@
 from config import HOSTNAME, START_DIR
-from logger import log_event
+from logger import log_event, SESSION_ID
 from llm_engine import ask, clean
 from shell import do_cd, try_fake
+from summary import build_summary, format_summary
 
 MAX_CMD_LEN = 500
 
@@ -17,6 +18,7 @@ while True:
         break
     if cmd in ("exit", "logout"):
         log_event(cwd, cmd, "", "python")
+        print("logout")
         break
     if not cmd:
         continue
@@ -44,3 +46,8 @@ while True:
     if out:
         print(out)
     log_event(cwd, cmd, out, "llm" if ok else "llm-error")
+
+summary = build_summary(SESSION_ID)
+if summary:
+    print()
+    print(format_summary(summary))

@@ -5,12 +5,13 @@ from lures import prompt_section
 load_dotenv()
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL = "gemini-3.1-flash-lite"
+MODEL = os.getenv("PHANTOMNET_MODEL", "gemini-3.1-flash-lite")
+FALLBACK_MODEL = os.getenv("PHANTOMNET_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 
 HOSTNAME = "prod-db-01"
 START_DIR = "/root"
 
-LOG_DIR = "logs"
+LOG_DIR = os.getenv("PHANTOMNET_LOG_DIR", "logs")
 LOG_FILE = os.path.join(LOG_DIR, "sessions.jsonl")
 
 SYSTEM_PROMPT = """You are emulating a Linux Ubuntu 22.04 server terminal.
