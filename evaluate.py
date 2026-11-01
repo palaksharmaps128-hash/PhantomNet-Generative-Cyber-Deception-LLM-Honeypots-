@@ -181,6 +181,7 @@ for scenario, commands in SCENARIOS:
             "realism_ok": not problems,
             "problems": "; ".join(problems),
             "output_preview": j.get("output", "").replace("\n", " | ")[:120],
+            "output_full": j.get("output", ""),
         }
         rows.append(row)
         flag = "ok" if row["realism_ok"] else "FAIL: " + row["problems"]

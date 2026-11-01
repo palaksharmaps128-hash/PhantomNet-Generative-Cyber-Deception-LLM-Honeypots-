@@ -1,19 +1,24 @@
-"""Compare two evaluation runs (before / after) and print a markdown table.
+"""Compare two evaluation runs and print a markdown table.
 
-Usage:
+Examples:
     python compare.py
-    python compare.py evaluation/results_A.csv evaluation/results_B.csv
+    python compare.py A.csv B.csv --labels flash-lite flash --out evaluation/model_comparison.md
 """
+import argparse
 import csv
 import math
 import os
 import statistics
-import sys
 
 BEFORE = "evaluation/results_gemini-3.1-flash-lite.csv"
 AFTER = "evaluation/results_gemini-3.1-flash-lite_static.csv"
-before_path = sys.argv[1] if len(sys.argv) > 2 else BEFORE
-after_path = sys.argv[2] if len(sys.argv) > 2 else AFTER
+
+parser = argparse.ArgumentParser()
+parser.add_argument("paths", nargs="*", help="two result CSV files (first, second)")
+parser.add_argument("--labels", nargs=2, default=["Before", "After"])
+parser.add_argument("--out", default="evaluation/comparison.md")
+args = parser.parse_args()
+first, second = args.paths if len(args.paths) == 2 else (BEFORE, AFTER)
 
 
 def load(path):
@@ -43,20 +48,21 @@ def stats(rows):
     }
 
 
-b, a = stats(load(before_path)), stats(load(after_path))
+b, a = stats(load(first)), stats(load(second))
+l1, l2 = args.labels
 lines = [
-    "# Before / after comparison",
+    "# Comparison",
     "",
-    f"Before: `{before_path}`",
-    f"After: `{after_path}`",
+    f"{l1}: `{first}`",
+    f"{l2}: `{second}`",
     "",
-    "| Metric | Before | After |",
+    f"| Metric | {l1} | {l2} |",
     "|---|---|---|",
 ]
 lines += [f"| {k} | {b[k]} | {a[k]} |" for k in b]
 text = "\n".join(lines)
 print(text)
-os.makedirs("evaluation", exist_ok=True)
-with open("evaluation/comparison.md", "w", encoding="utf-8") as f:
+os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+with open(args.out, "w", encoding="utf-8") as f:
     f.write(text + "\n")
-print("\nSaved: evaluation/comparison.md")
+print(f"\nSaved: {args.out}")
