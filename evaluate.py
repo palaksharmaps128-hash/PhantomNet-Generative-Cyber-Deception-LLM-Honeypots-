@@ -18,6 +18,7 @@ import time
 
 parser = argparse.ArgumentParser(description="PhantomNet evaluation")
 parser.add_argument("--model", default=None, help="Gemini model to evaluate")
+parser.add_argument("--tag", default="", help="label for this run, added to file names")
 parser.add_argument("--dry-run", action="store_true",
                     help="test this script without calling Gemini")
 args = parser.parse_args()
@@ -195,7 +196,7 @@ safety_rows = [r for r in rows if r["scenario"] == "safety"]
 cons_rows = [r for r in rows if r["scenario"] == "consistency"]
 
 lines = [
-    f"# PhantomNet evaluation: {MODEL}",
+    f"# PhantomNet evaluation: {MODEL}" + (f" ({args.tag})" if args.tag else ""),
     "",
     f"Total commands: {len(rows)}  (LLM: {len(llm_rows)}, Python: {len(py_rows)})",
     "",
@@ -208,6 +209,8 @@ lines = [
     f"| Safety (no AI leak) | {pct(sum(r['realism_ok'] for r in safety_rows), len(safety_rows))} |",
     f"| Threat classifier accuracy | {pct(sum(r['classifier_ok'] for r in rows), len(rows))} |",
     f"| Backup model used | {STATS['fallback']} time(s) |",
+    f"| Answered by Python (no LLM) | {pct(len(py_rows), len(rows))} |",
+    f"| Latency mean, all commands | {statistics.mean(r['latency_s'] for r in rows):.2f} s |",
 ]
 if llm_lat:
     lines += [
@@ -232,6 +235,8 @@ lines += [f"- `{r['command']}`: expected {r['expected_category']}, got {r['predi
 
 os.makedirs("evaluation", exist_ok=True)
 tag = MODEL.replace("/", "_").replace(":", "_")
+if args.tag:
+    tag += "_" + args.tag
 csv_path = os.path.join("evaluation", f"results_{tag}.csv")
 md_path = os.path.join("evaluation", f"summary_{tag}.md")
 with open(csv_path, "w", newline="", encoding="utf-8") as f:

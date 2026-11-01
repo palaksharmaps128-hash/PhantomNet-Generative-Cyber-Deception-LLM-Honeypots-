@@ -1,5 +1,6 @@
 import posixpath
 import shlex
+from static_responses import static_reply
 from lures import (
     FAKE_FILES, FILE_MODES, FILE_MTIME, FAKE_DIRS, EXTRA_SUBDIRS,
     DIR_OWNER, DIR_MODE, DIR_MTIME, PARENT_LINKS, resolve,
@@ -128,7 +129,10 @@ def _fake_cat(args, cwd):
 
 
 def try_fake(cmd, cwd):
-    """Return output for lure files/dirs, or None so the LLM answers."""
+    """Return output for static commands and lure files, or None so the LLM answers."""
+    static = static_reply(cmd)
+    if static is not None:
+        return static
     if any(c in SHELL_META for c in cmd):
         return None
     try:
