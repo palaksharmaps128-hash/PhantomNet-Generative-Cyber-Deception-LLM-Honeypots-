@@ -7,6 +7,7 @@ from summary import build_summary, format_summary
 MAX_CMD_LEN = 500
 
 cwd = START_DIR
+state = {"users": []}
 print(f"Ubuntu 22.04.3 LTS {HOSTNAME} tty1\n")
 
 while True:
@@ -36,9 +37,10 @@ while True:
         print(cwd)
         log_event(cwd, cmd, cwd, "python")
         continue
-    fake = try_fake(cmd, cwd)
+    fake = try_fake(cmd, cwd, state=state)
     if fake is not None:
-        print(fake)
+        if fake:
+            print(fake)
         log_event(cwd, cmd, fake, "python")
         continue
     raw, ok = ask(cwd, cmd)

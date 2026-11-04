@@ -1,0 +1,10 @@
+services:
+  phantomnet:
+    build: .
+    env_file: .env
+    ports:
+      # Bound to localhost only: the honeypot is not exposed to the internet.
+      - "127.0.0.1:5000:5000"
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - ./logs:/app/logs

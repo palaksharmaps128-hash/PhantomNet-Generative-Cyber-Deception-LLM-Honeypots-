@@ -1,6 +1,10 @@
+import ipaddress
 import posixpath
+import re
 import shlex
-from static_responses import static_reply
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+from static_responses import static_reply, base_users
 from lures import (
     FAKE_FILES, FILE_MODES, FILE_MTIME, FAKE_DIRS, EXTRA_SUBDIRS,
     DIR_OWNER, DIR_MODE, DIR_MTIME, PARENT_LINKS, resolve,
@@ -128,9 +132,118 @@ def _fake_cat(args, cwd):
     return "\n".join(outs)
 
 
-def try_fake(cmd, cwd):
-    """Return output for static commands and lure files, or None so the LLM answers."""
-    static = static_reply(cmd)
+USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+def _fake_useradd(args, state):
+    if state is None:
+        return None
+    flags = [a for a in args if a.startswith("-")]
+    names = [a for a in args if not a.startswith("-")]
+    if any(f not in ("-m", "-M", "-r") for f in flags) or len(names) != 1:
+        return None
+    name = names[0]
+    if not USER_RE.match(name):
+        return f"useradd: invalid user name '{name}'"
+    if name in base_users() or name in state["users"]:
+        return f"useradd: user '{name}' already exists"
+    state["users"].append(name)
+    return ""
+
+
+def _fake_userdel(args, state):
+    names = [a for a in args if not a.startswith("-")]
+    if state is None or len(names) != 1 or any(a.startswith("-") for a in args):
+        return None
+    name = names[0]
+    if name in state["users"]:
+        state["users"].remove(name)
+        return ""
+    if name in base_users():
+        return None
+    return f"userdel: user '{name}' does not exist"
+
+
+def _is_ip(host):
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+def _url_and_host(args):
+    for a in args:
+        if "://" in a:
+            return a, urlparse(a).hostname
+    return None, None
+
+
+def _fake_wget(args):
+    url, host = _url_and_host(args)
+    if not host or _is_ip(host):
+        return None
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return (
+        f"--{ts}--  {url}\n"
+        f"Resolving {host} ({host})... failed: Temporary failure in name resolution.\n"
+        f"wget: unable to resolve host address \u2018{host}\u2019"
+    )
+
+
+def _fake_curl(args):
+    _, host = _url_and_host(args)
+    if not host or _is_ip(host):
+        return None
+    return f"curl: (6) Could not resolve host: {host}"
+
+
+def _remote_target(cmd_name, args):
+    """Return (host, port) for scp/ssh, or (None, None) if it is a local copy."""
+    port_flag = "-P" if cmd_name == "scp" else "-p"
+    value_flags = {"-p", "-P", "-i", "-l", "-o", "-F", "-J", "-L", "-R", "-D"}
+    port, host, skip = "22", None, False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a in value_flags:
+            if a == port_flag and i + 1 < len(args):
+                port = args[i + 1]
+            skip = True
+            continue
+        if a.startswith("-"):
+            continue
+        if cmd_name == "scp":
+            if ":" in a and not a.startswith(("/", "./", "../")):
+                host = a.split(":")[0].split("@")[-1]
+                break
+        else:
+            host = a.split("@")[-1]
+            break
+    return (host, port) if host else (None, None)
+
+
+def _fake_remote(cmd_name, args):
+    host, port = _remote_target(cmd_name, args)
+    if not host:
+        return None
+    if _is_ip(host):
+        msg = f"ssh: connect to host {host} port {port}: Connection timed out"
+    else:
+        msg = f"ssh: Could not resolve hostname {host}: Temporary failure in name resolution"
+    return msg + ("\nlost connection" if cmd_name == "scp" else "")
+
+
+def try_fake(cmd, cwd, state=None):
+    """Return output for static commands, lure files and a few commands that
+    must stay consistent, or None so the LLM answers.
+
+    An empty string means "ran silently". state is a per-session dict
+    ({"users": [...]}) that remembers users added with useradd.
+    """
+    users = state["users"] if state else None
+    static = static_reply(cmd, users)
     if static is not None:
         return static
     if any(c in SHELL_META for c in cmd):
@@ -141,8 +254,19 @@ def try_fake(cmd, cwd):
         return None
     if not parts:
         return None
-    if parts[0] == "ls":
-        return _fake_ls(parts[1:], cwd)
-    if parts[0] == "cat":
-        return _fake_cat(parts[1:], cwd)
+    name, args = parts[0], parts[1:]
+    if name == "ls":
+        return _fake_ls(args, cwd)
+    if name == "cat":
+        return _fake_cat(args, cwd)
+    if name == "useradd":
+        return _fake_useradd(args, state)
+    if name == "userdel":
+        return _fake_userdel(args, state)
+    if name == "wget":
+        return _fake_wget(args)
+    if name == "curl":
+        return _fake_curl(args)
+    if name in ("scp", "ssh"):
+        return _fake_remote(name, args)
     return None

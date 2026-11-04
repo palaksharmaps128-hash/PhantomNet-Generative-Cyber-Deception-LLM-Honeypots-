@@ -31,6 +31,7 @@ def get_session(sid):
                 "cwd": START_DIR,
                 "chat": new_chat(),
                 "lock": threading.Lock(),
+                "state": {"users": []},
                 "times": deque(),
                 "count": 0,
             }
@@ -89,7 +90,7 @@ def command():
             log_event(cwd, cmd, cwd, "python", session_id=sid)
             output, source = cwd, "python"
         else:
-            fake = try_fake(cmd, cwd)
+            fake = try_fake(cmd, cwd, state=session["state"])
             if fake is not None:
                 log_event(cwd, cmd, fake, "python", session_id=sid)
                 output, source = fake, "python"
@@ -133,6 +134,22 @@ def session_summary(session_id):
     if result is None:
         return jsonify({"error": "session not found"}), 404
     return jsonify(result)
+
+
+@app.get("/api/similar")
+def similar():
+    text = (request.args.get("q") or "").strip()
+    if not text:
+        return jsonify({"error": "q is required"}), 400
+    try:
+        k = max(1, min(int(request.args.get("k", 5)), 20))
+    except ValueError:
+        return jsonify({"error": "k must be a number"}), 400
+    try:
+        from vector_store import search_similar  # loaded only when needed
+        return jsonify(search_similar(text, k=k))
+    except Exception as exc:
+        return jsonify({"error": f"vector search unavailable: {exc}"}), 503
 
 
 @app.get("/api/stats")
