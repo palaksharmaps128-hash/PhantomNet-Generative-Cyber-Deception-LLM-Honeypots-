@@ -16,5 +16,5 @@ Write-Host "Starting the dashboard..."
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$here'; python -m streamlit run dashboard.py"
 Start-Sleep -Seconds 6
 
-Start-Process "http://localhost:8501"
+Start-Process "http://localhost:8501/?presenter=1"
 Write-Host "Done. The API is on http://127.0.0.1:5000 and the dashboard on http://localhost:8501"

